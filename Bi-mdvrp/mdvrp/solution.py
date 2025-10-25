@@ -5,54 +5,33 @@ from typing import Dict, List, Tuple
 from mdvrp.data import Problem
 
 
-# ==========================================================
-# Generate Initial Solution
-# ==========================================================
 def generate_initial_solution(problem: Problem, rng=None) -> dict:
-    """
-    Build an initial MDVRP solution with both upper and lower levels:
-      Upper level: Routes from depots to customers
-      Lower level: Production allocation from plants to depots
-
-    Returns:
-        dict with keys 'routes' and 'alloc'
-    """
+    """Build initial MDVRP solution with routes and allocation."""
     if rng is None:
         rng = random.Random()
 
-    depots = problem.depots
-    customers = problem.customers
-    capacity = problem.capacity
-    coords = problem.coords
-    vehicles_per_depot = getattr(problem, "vehicles_per_depot", {d: 1 for d in depots})
-
-    # Distance helper
     def euclid(a, b):
-        if a not in coords or b not in coords:
+        if a not in problem.coords or b not in problem.coords:
             return float('inf')
-        ax, ay = coords[a]
-        bx, by = coords[b]
+        ax, ay = problem.coords[a]
+        bx, by = problem.coords[b]
         return math.hypot(ax - bx, ay - by)
 
-    # Step 1: Assign each customer to nearest depot
-    depot_customers = {d: [] for d in depots}
-    for c in customers:
-        nearest = min(depots, key=lambda d: euclid(c, d))
+    # Step 1: Assign customers to nearest depot
+    depot_customers = {d: [] for d in problem.depots}
+    for c in problem.customers:
+        nearest = min(problem.depots, key=lambda d: euclid(c, d))
         depot_customers[nearest].append(c)
 
     # Step 2: Create routes respecting capacity
     routes = {}
-    depot_demands = {}  # Track total demand per depot
+    depot_demands = {}
 
-    for depot in depots:
+    for depot in problem.depots:
         custs = depot_customers[depot]
         depot_demands[depot] = 0.0
-
-        if not custs:
-            routes[depot] = []
-            continue
-
         rng.shuffle(custs)
+
         depot_routes = []
         current_route = []
         current_load = 0.0
@@ -61,9 +40,7 @@ def generate_initial_solution(problem: Problem, rng=None) -> dict:
             demand = problem.demand.get(c, 0.0)
             depot_demands[depot] += demand
 
-            # Check if adding this customer exceeds capacity
-            if current_load + demand > capacity and current_route:
-                # Close current route
+            if current_load + demand > problem.capacity and current_route:
                 depot_routes.append([depot] + current_route + [depot])
                 current_route = []
                 current_load = 0.0
@@ -71,19 +48,15 @@ def generate_initial_solution(problem: Problem, rng=None) -> dict:
             current_route.append(c)
             current_load += demand
 
-        # Add final route if exists
         if current_route:
             depot_routes.append([depot] + current_route + [depot])
 
         routes[depot] = depot_routes
 
-    # Step 3: Generate lower-level allocation (plants → depots)
+    # Step 3: Generate allocation (plants → depots)
     alloc = generate_initial_allocation(problem, depot_demands, rng)
 
-    return {
-        "routes": routes,
-        "alloc": alloc
-    }
+    return {"routes": routes, "alloc": alloc}
 
 
 def generate_initial_allocation(
@@ -91,20 +64,14 @@ def generate_initial_allocation(
         depot_demands: Dict[int, float],
         rng
 ) -> Dict[Tuple[int, int], float]:
-    """
-    Generate initial production allocation from plants to depots.
-    Simple greedy approach: assign nearest plant first.
-
-    Returns:
-        {(plant_id, depot_id): quantity}
-    """
+    """Generate production allocation from plants to depots."""
     alloc = {}
     remaining_capacity = {k: problem.plant_capacity.get(k, 0.0) for k in problem.plants}
 
     for depot, demand in depot_demands.items():
         remaining_demand = demand
 
-        # Sort plants by cost (c_b + c_c)
+        # Sort plants by cost
         plants_sorted = sorted(
             problem.plants,
             key=lambda k: (
@@ -117,7 +84,6 @@ def generate_initial_allocation(
             if remaining_demand <= 0:
                 break
 
-            # Allocate as much as possible from this plant
             available = remaining_capacity[plant]
             quantity = min(remaining_demand, available)
 
@@ -126,54 +92,38 @@ def generate_initial_allocation(
                 remaining_capacity[plant] -= quantity
                 remaining_demand -= quantity
 
-        # If demand still not satisfied, use any remaining capacity
-        if remaining_demand > 0:
-            for plant in problem.plants:
-                if remaining_capacity[plant] > 0:
-                    quantity = min(remaining_demand, remaining_capacity[plant])
-                    alloc[(plant, depot)] = alloc.get((plant, depot), 0.0) + quantity
-                    remaining_capacity[plant] -= quantity
-                    remaining_demand -= quantity
-                    if remaining_demand <= 0:
-                        break
-
     return alloc
 
 
-# ==========================================================
-# Quick Repair
-# ==========================================================
 def quick_repair(solution: dict, problem: Problem) -> dict:
-    """
-    Repair infeasible routes by splitting overloaded routes.
-    Also validates allocation feasibility.
+    """Repair infeasible routes by splitting overloaded routes."""
 
-    Args:
-        solution: dict with 'routes' and 'alloc'
+    # Normalize input: ensure dict with 'routes' and 'alloc'
+    if not isinstance(solution, dict):
+        solution = {"routes": {}, "alloc": {}}
 
-    Returns:
-        Repaired solution
-    """
-    if not isinstance(solution, dict) or "routes" not in solution:
-        # Handle old format (just routes dict)
-        routes = solution if isinstance(solution, dict) else {}
-        solution = {"routes": routes, "alloc": {}}
+    if "routes" not in solution:
+        # Old format: entire dict is routes
+        solution = {"routes": solution, "alloc": solution.get("alloc", {})}
 
     routes = solution.get("routes", {})
     alloc = solution.get("alloc", {})
 
-    # Repair routes
+    # Normalize routes to dict format
+    if isinstance(routes, list):
+        routes = {1: routes}
+
+    # Repair overloaded routes
     repaired_routes = {d: [] for d in problem.depots}
 
     for depot, route_list in routes.items():
         for route in route_list:
-            if len(route) < 3:  # Empty route [depot, depot]
+            if len(route) < 3:
                 continue
 
             current_route = [depot]
             current_load = 0.0
 
-            # Skip first and last depot
             for node in route[1:-1]:
                 if node not in problem.customers:
                     continue
@@ -181,7 +131,6 @@ def quick_repair(solution: dict, problem: Problem) -> dict:
                 demand = problem.demand.get(node, 0.0)
 
                 if current_load + demand > problem.capacity and current_route != [depot]:
-                    # Close current route and start new one
                     current_route.append(depot)
                     repaired_routes[depot].append(current_route)
                     current_route = [depot]
@@ -190,50 +139,65 @@ def quick_repair(solution: dict, problem: Problem) -> dict:
                 current_route.append(node)
                 current_load += demand
 
-            # Add final route
             if len(current_route) > 1:
                 current_route.append(depot)
                 repaired_routes[depot].append(current_route)
 
-    # Repair allocation (ensure plant capacities respected)
-    repaired_alloc = repair_allocation(problem, alloc)
+    # Repair allocation
+    repaired_alloc = repair_allocation(alloc, problem)
 
-    return {
-        "routes": repaired_routes,
-        "alloc": repaired_alloc
-    }
+    return {"routes": repaired_routes, "alloc": repaired_alloc}
 
 
-def repair_allocation(problem: Problem, alloc: Dict[Tuple[int, int], float]) -> Dict[Tuple[int, int], float]:
-    """Ensure allocation respects plant capacity constraints."""
-    repaired = {}
-    plant_usage = {k: 0.0 for k in problem.plants}
+def repair_allocation(y_alloc: dict, problem) -> dict:
+    """
+    Repairs or initializes allocation matrix (plants → depots).
+    Rules:
+      - A plant may serve multiple depots.
+      - Not all (plant, depot) pairs must exist.
+      - Total depot demand ≤ total plant capacity.
+    """
 
-    for (plant, depot), qty in alloc.items():
-        if plant not in problem.plants or depot not in problem.depots:
+    # --- Initialize empty allocation if needed ---
+    if not y_alloc:
+        y_alloc = {p: {} for p in problem.plants}
+
+    # --- Compute depot demands (if not provided) ---
+    total_demand = sum(problem.demand.values())
+    avg_demand = total_demand / max(len(problem.depots), 1)
+    depot_demands = {d: avg_demand for d in problem.depots}
+
+    # --- Track current plant usage ---
+    plant_usage = {p: sum(y_alloc.get(p, {}).values()) for p in problem.plants}
+
+    total_capacity = sum(problem.plant_capacity.values())
+    if total_capacity <= 0 or total_demand <= 0:
+        return y_alloc
+
+    # --- Repair: add or adjust only feasible (plant, depot) pairs ---
+    for plant in problem.plants:
+        cap_share = problem.plant_capacity[plant] / total_capacity
+        available = problem.plant_capacity[plant] - plant_usage[plant]
+        if available <= 0:
             continue
 
-        capacity = problem.plant_capacity.get(plant, 0.0)
-        available = capacity - plant_usage[plant]
+        # Only touch depots this plant already serves OR a few random new ones
+        depot_keys = list(y_alloc[plant].keys()) or [random.choice(problem.depots)]
+        for depot in depot_keys:
+            demand = depot_demands.get(depot, avg_demand)
+            alloc_qty = min(available, demand * cap_share)
+            y_alloc.setdefault(plant, {})[depot] = alloc_qty
 
-        if available > 0:
-            actual_qty = min(qty, available)
-            if actual_qty > 0:
-                repaired[(plant, depot)] = actual_qty
-                plant_usage[plant] += actual_qty
-
-    return repaired
+    return y_alloc
 
 
-# ==========================================================
-# Random Route Mutation
-# ==========================================================
+
 def mutate_route(route: List[int], rng=None) -> List[int]:
-    """Simple in-route 2-swap mutation (avoids depot positions)."""
+    """Simple in-route 2-swap mutation."""
     if rng is None:
         rng = random.Random()
 
-    if len(route) > 4:  # Need at least 2 customers
+    if len(route) > 4:
         interior = list(range(1, len(route) - 1))
         if len(interior) >= 2:
             i, j = rng.sample(interior, 2)
@@ -242,14 +206,8 @@ def mutate_route(route: List[int], rng=None) -> List[int]:
     return route
 
 
-# ==========================================================
-# Apply Upper-Level Operator
-# ==========================================================
 def apply_ul_operator(solution: dict, problem: Problem, rng=None) -> dict:
-    """
-    Perform random structural modification on routes.
-    Operations: swap, reverse, or relocate within a route.
-    """
+    """Apply random structural modification on routes."""
     if rng is None:
         rng = random.Random()
 
@@ -268,7 +226,7 @@ def apply_ul_operator(solution: dict, problem: Problem, rng=None) -> dict:
     route_idx = rng.randint(0, len(new_routes[depot]) - 1)
     route = new_routes[depot][route_idx]
 
-    if len(route) <= 3:  # Can't mutate [depot, customer, depot]
+    if len(route) <= 3:
         return solution
 
     # Choose operation
@@ -286,30 +244,22 @@ def apply_ul_operator(solution: dict, problem: Problem, rng=None) -> dict:
         if len(customer_indices) >= 2:
             i = rng.choice(customer_indices)
             node = route.pop(i)
-            # Reinsert at different position
             valid_positions = [p for p in range(1, len(route)) if p != i]
             if valid_positions:
                 j = rng.choice(valid_positions)
                 route.insert(j, node)
 
-    # Update the modified route
     new_routes[depot][route_idx] = route
 
-    return {
-        "routes": new_routes,
-        "alloc": alloc  # Keep allocation unchanged
-    }
+    return {"routes": new_routes, "alloc": alloc}
 
 
-# ==========================================================
-# Utilities
-# ==========================================================
 def count_customers_served(solution: dict, problem: Problem) -> int:
     """Count unique customers in all routes."""
     routes = solution.get("routes", {})
     served = set()
 
-    for depot, route_list in routes.items():
+    for route_list in routes.values():
         for route in route_list:
             for node in route:
                 if node in problem.customers:
@@ -319,10 +269,7 @@ def count_customers_served(solution: dict, problem: Problem) -> int:
 
 
 def validate_solution(solution: dict, problem: Problem) -> Tuple[bool, List[str]]:
-    """
-    Validate solution feasibility.
-    Returns: (is_valid, list_of_errors)
-    """
+    """Validate solution feasibility."""
     errors = []
     routes = solution.get("routes", {})
     alloc = solution.get("alloc", {})
@@ -351,7 +298,7 @@ def validate_solution(solution: dict, problem: Problem) -> Tuple[bool, List[str]
 
     for plant, usage in plant_usage.items():
         capacity = problem.plant_capacity.get(plant, 0.0)
-        if usage > capacity + 1e-6:  # Small tolerance for floating point
+        if usage > capacity + 1e-6:
             errors.append(f"Plant {plant} exceeds capacity: {usage:.2f} > {capacity:.2f}")
 
     return (len(errors) == 0, errors)

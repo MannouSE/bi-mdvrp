@@ -9,34 +9,28 @@ def _is_empty_routes(routes):
 def _is_empty_alloc(y_alloc):
     return (not y_alloc) or all((not v) for v in y_alloc.values())
 
-def safe_cost(sol, problem):
+def safe_cost(solution, problem):
     """
-    Returns: (ok: bool, ul: float, ll: float, total: float)
-    NOTE: If routes or alloc are empty → infeasible (inf).
+    Return (ok, ul_cost, ll_cost, total_cost).
     """
     try:
-        if sol is None or not isinstance(sol, dict):
-            return False, float('inf'), float('inf'), float('inf')
+        routes = solution.get("routes", {})
+        y_alloc = solution.get("alloc", {})
 
-        routes = sol.get("routes", {})
-        y_alloc = sol.get("alloc", {})
+        # --- if empty → infeasible
+        if not routes or not any(routes.values()):
+            return False, float("inf"), float("inf"), float("inf")
 
-        # Hard feasibility guards
-        if _is_empty_routes(routes) or _is_empty_alloc(y_alloc):
-            return False, float('inf'), float('inf'), float('inf')
+        ul, ll, total = total_cost(routes, y_alloc, problem)
 
-        ul = routing_cost(routes, problem)                # your existing UL
-        tot = total_cost(routes, y_alloc, problem)        # your existing total
+        if not math.isfinite(total):
+            return False, float("inf"), float("inf"), float("inf")
 
-        if not math.isfinite(tot):
-            return False, float('inf'), float('inf'), float('inf')
-
-        ll = tot - ul
-        return True, float(ul), float(ll), float(tot)
+        return True, float(ul), float(ll), float(total)
 
     except Exception as e:
         print(f"[safe_cost] error: {e}")
-        return False, float('inf'), float('inf'), float('inf')
+        return False, float("inf"), float("inf"), float("inf")
 
 def evaluate_bi_solution(sol, problem):
     """
@@ -104,15 +98,3 @@ def safe_cost(sol, problem, compute_alloc_fn=None):
         print(f"[safe_cost] error: {e}")
         return False, float("inf"), float("inf"), float("inf")
 """
-def safe_cost(solution, problem):
-    """
-    Safely compute cost breakdown (upper, lower, total).
-    """
-    try:
-        routes = solution.get("routes", {})
-        y_alloc = solution.get("alloc", {})
-        ul, ll, total = total_cost(routes, y_alloc, problem)
-        return True, ul, ll, total
-    except Exception as e:
-        print("[safe_cost] error:", e)
-        return False, float("inf"), float("inf"), float("inf")
