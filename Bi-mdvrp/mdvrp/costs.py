@@ -1,5 +1,5 @@
 # costs.py
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from mdvrp.data import Problem
 from mdvrp.lower_level import solve_lower_level
 
@@ -81,31 +81,27 @@ def total_cost(routes, y_alloc, problem):
 """
 import math
 
-def total_cost(routes, y_alloc, problem):
+def total_cost(routes: Dict[int, list],
+               y_alloc: Dict[int, Dict[int, float]],
+               problem) -> Tuple[float, float, float]:
     """
-    Compute total bi-MDVRP cost (routing + allocation),
-    purely based on travel distances and allocation quantities.
-    No SOC or charging logic.
+    Compute total bi-MDVRP cost (routing + allocation).
+    - routing: depot→customer→depot distances
+    - allocation: plant→depot * quantity
     """
+    D = problem.distance_matrix
+    routing_cost, alloc_cost = 0.0, 0.0
 
-    D = problem.distance_matrix  # distance matrix
-    routing_cost = 0.0
-
-    # --- Upper-level: depot→customers routing ---
+    # --- upper level
     for depot, route_list in routes.items():
         for route in route_list:
-            for t in range(len(route) - 1):
-                i, j = route[t], route[t + 1]
+            for i, j in zip(route[:-1], route[1:]):
                 routing_cost += D[i][j]
 
-    # --- Lower-level: plant→depot allocation cost ---
-    # You can adapt this if you have a transport cost per unit distance.
-    allocation_cost = 0.0
+    # --- lower level
     for k, depot_dict in y_alloc.items():
         for l, qty in depot_dict.items():
-            if qty > 0:
-                allocation_cost += qty * D[k][l]
+            alloc_cost += qty * D[k][l]
 
-    total = routing_cost + allocation_cost
-    return routing_cost, allocation_cost, total
-
+    total = routing_cost + alloc_cost
+    return routing_cost, alloc_cost, total

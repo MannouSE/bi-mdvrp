@@ -16,23 +16,32 @@ def embed_solution(solution, dim: int = 32) -> List[float]:
     """
     values = []
 
-    # Handle multi-depot dictionary {depot: [routes]}
+    # Extract routes from solution structure
     if isinstance(solution, dict):
-        for depot, routes in solution.items():
-            for route in routes:
-                # Encode route length and load roughly
-                values.append(len(route))
-                values.append(sum(route))
+        # Handle new format: {"routes": {...}, "alloc": {...}}
+        if "routes" in solution:
+            routes_dict = solution["routes"]
+        else:
+            # Old format: solution is routes dict directly
+            routes_dict = solution
+
+        # Now iterate over depot routes
+        for depot, route_list in routes_dict.items():
+            if isinstance(route_list, list):
+                for route in route_list:
+                    if isinstance(route, list):
+                        values.append(len(route))
+                        values.append(sum(route))
     else:
         # Single list of routes
         for route in solution:
-            values.append(len(route))
-            values.append(sum(route))
+            if isinstance(route, list):
+                values.append(len(route))
+                values.append(sum(route))
 
     # Normalize size to 'dim'
     flat = values[:dim] + [0.0] * max(0, dim - len(values))
     return flat
-
 
 # ==========================================================
 # 📍 2. Distance Function

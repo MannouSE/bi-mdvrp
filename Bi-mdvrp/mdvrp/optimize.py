@@ -43,39 +43,42 @@ def initialize(problem: Problem, pop_size: int, eps_start: float, rng):
 # ==========================================================
 # Main Optimization
 # ==========================================================
-def optimize(problem: Problem, cfg: SimpleNamespace, rng: random.Random):
+def optimize(problem, cfg: SimpleNamespace, rng: random.Random):
     """
     Q-learning hyper-heuristic for bi-level MDVRP.
+    Minimizes total cost (routing + allocation).
 
-    Config should have: pop_size, max_gens, tournament_size,
-                       alpha, gamma, eps_start, eps_min, decay
+    Config requires:
+      pop_size, max_gens, tournament_size,
+      alpha, gamma, eps_start, eps_min, decay
     """
-    # Initialize
+
+    # 1️⃣ Initialization
     pop, elite, centroids, best_cost, best_sol, Q, state, eps = \
         initialize(problem, cfg.pop_size, cfg.eps_start, rng)
 
-    # Evolution loop
+    # 2️⃣ Evolutionary loop
     for gen in range(cfg.max_gens):
 
-        # 1) Evaluate population
+        # === Evaluate population ===
         costs = [safe_cost(sol, problem)[-1] for sol in pop]
-        fitness = [1.0 / (1.0 + c) if math.isfinite(c) else 0.0 for c in costs]
 
-        # 2) Tournament selection for mating pool
+        # === Tournament selection (use costs directly) ===
         mating_pool = []
         t_size = max(1, min(getattr(cfg, "tournament_size", 2), len(pop)))
         for _ in range(len(pop)):
             competitors = rng.sample(range(len(pop)), t_size)
-            winner = max(competitors, key=lambda i: fitness[i])
+            # Minimization → pick lowest cost
+            winner = min(competitors, key=lambda i: costs[i])
             mating_pool.append(pop[winner])
 
-        # 3) Choose action (ε-greedy)
+        # === Choose heuristic (ε-greedy Q-learning) ===
         if rng.random() < eps:
             action = rng.choice(ACTIONS)
         else:
             action = get_best_action(Q, state, ACTIONS)
 
-        # 4) Apply heuristic to create offspring
+        # === Apply heuristic to generate offspring ===
         offspring = []
         use_h4 = (action == "H4" and elite and centroids)
 
@@ -99,14 +102,14 @@ def optimize(problem: Problem, cfg: SimpleNamespace, rng: random.Random):
             child = quick_repair(child, problem)
             offspring.append(child)
 
-        # 5) Evaluate offspring
+        # === Evaluate offspring ===
         offspring_costs = [safe_cost(c, problem)[-1] for c in offspring]
         best_off_idx = min(range(len(offspring_costs)),
                            key=lambda i: offspring_costs[i])
         best_off_cost = offspring_costs[best_off_idx]
         best_off = offspring[best_off_idx]
 
-        # 6) Simulated annealing acceptance
+        # === Simulated annealing acceptance ===
         delta = best_off_cost - best_cost
         temperature = max(1e-3, 0.98 ** gen)
 
@@ -126,39 +129,37 @@ def optimize(problem: Problem, cfg: SimpleNamespace, rng: random.Random):
         else:
             print(f"[gen {gen}] ❌ Rejected (Δ={delta:.2f}, p={accept_prob:.3f})")
 
-        # 7) Update Q-learning
-        if not math.isfinite(best_off_cost) or best_off_cost <= 0:
-            norm_cost = 1.0
-        elif not math.isfinite(best_cost) or best_cost <= 0:
-            norm_cost = best_off_cost
+        # === Update Q-learning reward ===
+        # Reward is improvement (lower cost → higher reward)
+        if delta < 0:
+            reward = abs(delta) / (1.0 + best_off_cost)
         else:
-            norm_cost = min(best_off_cost / (1.0 + best_cost), 1e6)
+            reward = -delta / (1.0 + best_off_cost)
 
         next_state = (1 if improved else 0, action)
-        update(Q, state, action, norm_cost, next_state,
+        update(Q, state, action, reward, next_state,
                cfg.alpha, cfg.gamma, ACTIONS)
         state = next_state
 
-        # 8) Survivor selection (μ+λ)
+        # === Survivor selection (μ+λ elitism) ===
         combined = pop + offspring
         combined_costs = costs + offspring_costs
-        sorted_idx = sorted(range(len(combined)),
-                            key=lambda i: combined_costs[i])
+        sorted_idx = sorted(range(len(combined)), key=lambda i: combined_costs[i])
         pop = [combined[i] for i in sorted_idx[:cfg.pop_size]]
 
-        # 9) Decay epsilon
+        # === Decay exploration rate ===
         eps = max(cfg.eps_min, decay_epsilon(eps, cfg.eps_min, cfg.decay))
 
-        # 10) Logging
+        # === Log progress ===
         bc = f"{best_cost:.2f}" if math.isfinite(best_cost) else "inf"
         print(f"[gen {gen}] best={bc} eps={eps:.3f} action={action}")
 
-    # Final summary
+    # 3️⃣ End of optimization
     print("\n=== Final Q-Table ===")
     for (s, a), val in sorted(Q.items()):
         print(f"  state={s}, action={a}: {val:.3f}")
 
-    # Handle no solution found
+    # Handle infeasible case
     if best_sol is None:
         print("[WARN] No feasible solution found.")
         best_sol = {"routes": {}, "alloc": {}}

@@ -74,7 +74,9 @@ def heuristic_h2_selective_ll(parent, elite, problem, rng: random.Random = rando
       - Evaluate cost and update elite if improved.
       - Always return a perturbed child for exploration.
     """
-    c_parent = safe_cost(parent, problem)
+    result = safe_cost(parent, problem)
+    c_parent = result[-1] if isinstance(result, (tuple, list)) else result
+
     if c_parent < float("inf"):
         update_elite_archive(
             elite,
@@ -84,6 +86,7 @@ def heuristic_h2_selective_ll(parent, elite, problem, rng: random.Random = rando
             max_size=getattr(problem, "elite_max", 120),
         )
     return apply_ul_operator(parent, problem, rng)
+
 
 
 # ==========================================================
