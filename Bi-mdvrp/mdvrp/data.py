@@ -32,9 +32,6 @@ class Problem:
     ready_time: Dict[int, float] = field(default_factory=dict)
     due_time: Dict[int, float] = field(default_factory=dict)
     service_time: Dict[int, float] = field(default_factory=dict)
-
-    plants: List[int] = field(default_factory=list)
-    depots: List[int] = field(default_factory=list)
     plant_capacity: Dict[int, float] = field(default_factory=dict)
     plant_cost_matrix: Dict[int, Dict[int, float]] = field(default_factory=dict)
 

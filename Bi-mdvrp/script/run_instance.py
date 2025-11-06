@@ -38,7 +38,8 @@ def main():
     best_sol, best_cost = optimize(problem, cfg, rng)
 
     # ---- 5. Print results ----
-    """
+    print("=====EXECUTION=====")
+
     print("\n=== FINAL RESULT ===")
     print(f"Best cost: {best_cost:.2f}")
     # --- Final report ---
@@ -73,8 +74,8 @@ def main():
     print("\n=== Final Costs ===")
     print(f"Upper-Level cost = {ul_c:.2f}")
     print(f"Lower-Level cost = {ll_c:.2f}")
-    print(f"Total cost       = {tot_c:.2f}")"""
-
+    print(f"Total cost       = {tot_c:.2f}")
+"""
     best_sol, best_cost = optimize(problem, cfg, rng)
 
     # Coerce to safe structure if needed
@@ -118,5 +119,7 @@ def main():
     ll_s = f"{ll:.2f}" if math.isfinite(ll) else "inf"
     tot_s = f"{tot:.2f}" if math.isfinite(tot) else "inf"
     print(f"\nCosts — Upper (routing): {ul_s} | Lower (plant): {ll_s} | Total: {tot_s}")
+"""
 if __name__ == "__main__":
     main()
+# python -m script.run_instance --instance "instances/p01" --gens 5 --pop 5

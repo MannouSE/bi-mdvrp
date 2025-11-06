@@ -9,28 +9,55 @@ def _is_empty_routes(routes):
 def _is_empty_alloc(y_alloc):
     return (not y_alloc) or all((not v) for v in y_alloc.values())
 
+
+import math
+"""
 def safe_cost(solution, problem):
-    """
-    Return (ok, ul_cost, ll_cost, total_cost).
-    """
+"""
+    #Safely compute total cost for a bi-level MDVRP solution.
+    #Returns (ok, ul_cost, ll_cost, total_cost)
+"""
     try:
         routes = solution.get("routes", {})
         y_alloc = solution.get("alloc", {})
 
-        # --- if empty → infeasible
+        print(f"\n[DEBUG safe_cost]")
+        print(f"  routes keys: {list(routes.keys())}")
+        print(f"  routes values: {[len(v) if v else 0 for v in routes.values()]}")
+        print(f"  y_alloc keys: {list(y_alloc.keys())}")
+
+        # ✅ Step 1: sanity check
         if not routes or not any(routes.values()):
+            print("  ❌ routes missing or empty!")
             return False, float("inf"), float("inf"), float("inf")
 
+        # ✅ Step 2: ensure depots are valid
+        for depot in routes.keys():
+            if depot not in problem.depots:
+                print(f"  ⚠️ Invalid depot ID: {depot}")
+                return False, float("inf"), float("inf"), float("inf")
+
+        print(f"  ✅ routes structure looks OK")
+
+        # ✅ Step 3: compute costs
         ul, ll, total = total_cost(routes, y_alloc, problem)
 
+        print(f"  Computed costs: ul={ul}, ll={ll}, total={total}")
+
+        # ✅ Step 4: check finiteness
         if not math.isfinite(total):
+            print(f"  ❌ total cost is not finite!")
             return False, float("inf"), float("inf"), float("inf")
 
+        print(f"  ✅ Valid solution")
         return True, float(ul), float(ll), float(total)
 
     except Exception as e:
-        print(f"[safe_cost] error: {e}")
+        print(f"[safe_cost] ❌ Exception: {e}")
+        import traceback
+        traceback.print_exc()
         return False, float("inf"), float("inf"), float("inf")
+"""
 
 def evaluate_bi_solution(sol, problem):
     """
@@ -70,7 +97,7 @@ def ensure_alloc(sol, problem, compute_alloc_fn):
             sol["alloc"] = y_alloc
     return routes, y_alloc, sol
 
-"""
+
 def safe_cost(sol, problem, compute_alloc_fn=None):
     
     #Returns: (ok: bool, ul_cost: float, ll_cost: float, total_cost: float)
@@ -97,4 +124,4 @@ def safe_cost(sol, problem, compute_alloc_fn=None):
     except Exception as e:
         print(f"[safe_cost] error: {e}")
         return False, float("inf"), float("inf"), float("inf")
-"""
+

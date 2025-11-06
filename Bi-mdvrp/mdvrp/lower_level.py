@@ -77,4 +77,4 @@ def solve_lower_level(problem, y_alloc=None):
     # Compute cost
     alloc_cost = sum(q * D[k][l] for (k, l), q in flat_alloc.items())
 
-    return True, y_alloc, alloc_cost
+    return y_alloc

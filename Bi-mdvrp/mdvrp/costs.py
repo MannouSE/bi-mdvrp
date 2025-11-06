@@ -81,14 +81,15 @@ def total_cost(routes, y_alloc, problem):
 """
 import math
 
+
 def total_cost(routes: Dict[int, list],
                y_alloc: Dict[int, Dict[int, float]],
                problem) -> Tuple[float, float, float]:
-    """
-    Compute total bi-MDVRP cost (routing + allocation).
-    - routing: depot→customer→depot distances
-    - allocation: plant→depot * quantity
-    """
+
+    #Compute total bi-MDVRP cost (routing + allocation).
+    #- routing: depot→customer→depot distances
+    #- allocation: plant→depot * quantity
+
     D = problem.distance_matrix
     routing_cost, alloc_cost = 0.0, 0.0
 

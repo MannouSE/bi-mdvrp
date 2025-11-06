@@ -59,42 +59,60 @@ def generate_initial_solution(problem: Problem, rng=None) -> dict:
     return {"routes": routes, "alloc": alloc}
 
 
-def generate_initial_allocation(
-        problem: Problem,
-        depot_demands: Dict[int, float],
-        rng
-) -> Dict[Tuple[int, int], float]:
-    """Generate production allocation from plants to depots."""
-    alloc = {}
-    remaining_capacity = {k: problem.plant_capacity.get(k, 0.0) for k in problem.plants}
+import random
 
-    for depot, demand in depot_demands.items():
-        remaining_demand = demand
 
-        # Sort plants by cost
-        plants_sorted = sorted(
-            problem.plants,
-            key=lambda k: (
-                    problem.c_b.get(k, {}).get(depot, 0.0) +
-                    problem.c_c.get(k, {}).get(depot, 0.0)
-            )
-        )
+def generate_initial_allocation(problem, depot_demands=None, rng=None):
+    """
+    Génère une allocation plantes→dépôts où chaque plante a un coût de production
+    aléatoire. L'allocation commence par les plantes les moins chères.
 
-        for plant in plants_sorted:
-            if remaining_demand <= 0:
+    Args:
+        problem: instance du problème (doit avoir .plants, .depots, .plant_capacity)
+        depot_demands: dict {depot: demand} (optionnel, 100.0 par défaut)
+        rng: random.Random instance (optionnel)
+    Returns:
+        y_alloc: dict {plant: {depot: quantity}}
+        plant_costs: dict {plant: production_cost}
+    """
+    if rng is None:
+        rng = random.Random()
+
+    plants = problem.plants
+    depots = problem.depots
+    plant_caps = problem.plant_capacity
+
+    # Générer les coûts aléatoires par plante
+    plant_costs = {p: round(rng.uniform(1.0, 5.0), 2) for p in plants}
+
+    # Préparer les demandes
+    if depot_demands is None:
+        depot_demands = {d: 100.0 for d in depots}
+
+    # Trier les plantes par coût croissant
+    sorted_plants = sorted(plants, key=lambda p: plant_costs[p])
+
+    # Initialiser l'allocation et les capacités restantes
+    y_alloc = {p: {d: 0.0 for d in depots} for p in plants}
+    remaining_cap = plant_caps.copy()
+
+    # Allouer la demande de chaque dépôt
+    for depot in depots:
+        demand = depot_demands[depot]
+
+        for plant in sorted_plants:
+            if demand <= 0 or remaining_cap[plant] <= 0:
+                continue
+
+            assign = min(remaining_cap[plant], demand)
+            y_alloc[plant][depot] = assign
+            remaining_cap[plant] -= assign
+            demand -= assign
+
+            if demand <= 0:
                 break
 
-            available = remaining_capacity[plant]
-            quantity = min(remaining_demand, available)
-
-            if quantity > 0:
-                alloc[(plant, depot)] = quantity
-                remaining_capacity[plant] -= quantity
-                remaining_demand -= quantity
-
-    return alloc
-
-
+    return y_alloc, plant_costs
 def quick_repair(solution: dict, problem: Problem) -> dict:
     """Repair infeasible routes by splitting overloaded routes."""
 
@@ -144,51 +162,63 @@ def quick_repair(solution: dict, problem: Problem) -> dict:
                 repaired_routes[depot].append(current_route)
 
     # Repair allocation
-    repaired_alloc = repair_allocation(alloc, problem)
+    print("Type of y_alloc before repair:", type(alloc))
+    print("Content:", alloc)
+    repaired_alloc = repair_allocation(problem, alloc)
 
     return {"routes": repaired_routes, "alloc": repaired_alloc}
 
 
-def repair_allocation(y_alloc: dict, problem) -> dict:
+def repair_allocation(problem, y_alloc, depot_demands=None):
     """
-    Repairs or initializes allocation matrix (plants → depots).
-    Rules:
-      - A plant may serve multiple depots.
-      - Not all (plant, depot) pairs must exist.
-      - Total depot demand ≤ total plant capacity.
+    Repair or rebuild the plant→depot allocation matrix.
+    Works whether `problem` is an object or dict, and even if y_alloc is malformed (list/tuple).
     """
 
-    # --- Initialize empty allocation if needed ---
-    if not y_alloc:
-        y_alloc = {p: {} for p in problem.plants}
+    # --- Normalize problem fields ---
+    get = lambda obj, key, default=None: getattr(obj, key, obj.get(key, default)) if isinstance(obj, dict) else getattr(obj, key, default)
 
-    # --- Compute depot demands (if not provided) ---
-    total_demand = sum(problem.demand.values())
-    avg_demand = total_demand / max(len(problem.depots), 1)
-    depot_demands = {d: avg_demand for d in problem.depots}
+    plants = get(problem, "plants", [])
+    depots = get(problem, "depots", [])
+    plant_capacity = get(problem, "plant_capacity", {})
 
-    # --- Track current plant usage ---
-    plant_usage = {p: sum(y_alloc.get(p, {}).values()) for p in problem.plants}
+    # --- Ensure y_alloc is a dict ---
+    if not isinstance(y_alloc, dict):
+        print("[repair_allocation] ⚠️ Invalid alloc format, rebuilding from scratch")
+        y_alloc = {p: {} for p in plants}
 
-    total_capacity = sum(problem.plant_capacity.values())
-    if total_capacity <= 0 or total_demand <= 0:
-        return y_alloc
+    repaired = {}
+    plant_usage = {p: 0.0 for p in plants}
 
-    # --- Repair: add or adjust only feasible (plant, depot) pairs ---
-    for plant in problem.plants:
-        cap_share = problem.plant_capacity[plant] / total_capacity
-        available = problem.plant_capacity[plant] - plant_usage[plant]
-        if available <= 0:
-            continue
+    # --- Demand / capacity stats ---
+    total_cap = sum(plant_capacity.values()) or 1.0
+    total_demand = sum(depot_demands.values()) if depot_demands else total_cap
+    avg_demand = total_demand / max(1, len(depots))
 
-        # Only touch depots this plant already serves OR a few random new ones
-        depot_keys = list(y_alloc[plant].keys()) or [random.choice(problem.depots)]
+    # --- Main allocation logic ---
+    for plant in plants:
+        capacity = plant_capacity.get(plant, 0.0)
+        available = max(0.0, capacity - plant_usage[plant])
+
+        # Get existing or initialize one depot
+        existing = y_alloc.get(plant, {})
+        depot_keys = list(existing.keys()) or [random.choice(depots)]
+        repaired[plant] = {}
+
         for depot in depot_keys:
-            demand = depot_demands.get(depot, avg_demand)
+            demand = depot_demands.get(depot, avg_demand) if depot_demands else avg_demand
+            cap_share = capacity / total_cap
             alloc_qty = min(available, demand * cap_share)
-            y_alloc.setdefault(plant, {})[depot] = alloc_qty
+            repaired[plant][depot] = alloc_qty
+            plant_usage[plant] += alloc_qty
 
-    return y_alloc
+    # --- Ensure all depots are served ---
+    for depot in depots:
+        if not any(depot in repaired[p] for p in repaired):
+            plant = random.choice(plants)
+            repaired.setdefault(plant, {})[depot] = avg_demand
+
+    return repaired
 
 
 
