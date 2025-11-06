@@ -6,6 +6,7 @@ from mdvrp.costs import total_cost
 from mdvrp.operators import apply_ul_operator
 from mdvrp.elite import update_elite_archive, cluster_elite_archive
 from mdvrp.cluster import embed_solution, nearest_centroid_idx, sqdist
+from mdvrp.solution import quick_repair
 from mdvrp.utils import safe_cost
 
 # ==========================================================
@@ -32,21 +33,11 @@ def find_nearest_centroid(solution, centroids: List[List[float]], problem) -> in
 # ==========================================================
 def heuristic_h1_full_hierarchical(parent, elite, centroids, problem, rng):
     """
-    H1: Full hierarchical.
-      1. Evaluate parent cost.
-      2. Add to elite archive with embedding.
-      3. Find nearest elite by centroid similarity.
-      4. Mutate and return child.
+    H1 – Full Hierarchical:
+    Solve LL exactly for each UL solution, align with nearest centroid,
+    and apply a UL operator. Full exploitation mode.
     """
-    c_parent = safe_cost(parent, problem)
-    update_elite_archive(
-        elite,
-        parent,
-        c_parent,
-        dim=getattr(problem, "embed_dim", 256),
-        max_size=getattr(problem, "elite_max", 120),
-    )
-
+    c_parent = full_cost(parent, problem)  # Evaluate full cost once
     centroids, _ = _ensure_centroids(elite, centroids, rng)
 
     start = parent
@@ -62,57 +53,51 @@ def heuristic_h1_full_hierarchical(parent, elite, centroids, problem, rng):
             if best_e is not None:
                 start = best_e
 
-    return apply_ul_operator(start, problem, rng)
+    child = apply_ul_operator(start, problem, rng)
+    return quick_repair(child, problem)
 
 
-# ==========================================================
-# 💡 Heuristic H2 — Selective LL evaluation
-# ==========================================================
-def heuristic_h2_selective_ll(parent, elite, problem, rng: random.Random = random):
+def heuristic_h2_selective_ll(parent, elite, problem, rng):
     """
-    H2: Selective lower-level evaluation.
-      - Evaluate cost and update elite if improved.
-      - Always return a perturbed child for exploration.
+    H2 – Selective LL Evaluation:
+    Evaluate LL only for promising ULs, then apply UL operator for exploration.
     """
-    result = safe_cost(parent, problem)
-    c_parent = result[-1] if isinstance(result, (tuple, list)) else result
+    if is_promising_ul(parent, problem):
+        ok, ll_sol, ll_cost = _solve_ll_exact3(parent, problem, rng)
+        if ok:
+            update_elite_archive(
+                elite, ll_sol, full_cost(ll_sol, problem),
+                dim=getattr(problem, "embed_dim", 256),
+                max_size=getattr(problem, "elite_max", 120)
+            )
 
-    if c_parent < float("inf"):
-        update_elite_archive(
-            elite,
-            parent,
-            c_parent,
-            dim=getattr(problem, "embed_dim", 256),
-            max_size=getattr(problem, "elite_max", 120),
-        )
-    return apply_ul_operator(parent, problem, rng)
-
+    child = apply_ul_operator(parent, problem, rng)
+    return quick_repair(child, problem)
 
 
-# ==========================================================
-# 💡 Heuristic H3 — Relaxed (exploratory mutation)
-# ==========================================================
-def heuristic_h3_relaxed_ll(parent, problem, rng: random.Random = random):
-    """H3: Random exploration without evaluation."""
-    return apply_ul_operator(parent, problem, rng)
-
-
-# ==========================================================
-# 💡 Heuristic H4 — Similarity-based
-# ==========================================================
-def heuristic_h4_similarity_based(parent, centroids, elite, problem, rng: random.Random = random):
+def heuristic_h3_relaxed_ll(parent, problem, rng):
     """
-    H4: Similarity-based start.
-      - Use embedding distance to start from the most similar elite.
-      - Then apply operator for mutation.
+    H3 – Relaxed LL:
+    Skip LL solving; perform quick UL exploration only.
+    """
+    child = apply_ul_operator(parent, problem, rng)
+    return quick_repair(child, problem)
+
+
+def heuristic_h4_similarity_based(parent, centroids, elite, problem, rng):
+    """
+    H4 – Similarity-based:
+    Start from the elite solution closest to the parent’s nearest centroid.
     """
     centroids, _ = _ensure_centroids(elite, centroids, rng)
     if not centroids:
-        return apply_ul_operator(parent, problem, rng)
+        child = apply_ul_operator(parent, problem, rng)
+        return quick_repair(child, problem)
 
     ci = find_nearest_centroid(parent, centroids, problem)
     if ci < 0:
-        return apply_ul_operator(parent, problem, rng)
+        child = apply_ul_operator(parent, problem, rng)
+        return quick_repair(child, problem)
 
     target = centroids[ci]
     best_sol, best_d = None, float("inf")
@@ -122,6 +107,6 @@ def heuristic_h4_similarity_based(parent, centroids, elite, problem, rng: random
             best_d, best_sol = d, sol
 
     start = best_sol if best_sol is not None else parent
-    return apply_ul_operator(start, problem, rng)
-
+    child = apply_ul_operator(start, problem, rng)
+    return quick_repair(child, problem)
 
